@@ -1,79 +1,151 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const socket = io();
     const board = document.getElementById('board');
     const cells = document.querySelectorAll('.cell');
     const status = document.getElementById('status');
-    const resetButton = document.getElementById('reset');
-    
-    let currentPlayer = 'X';
-    let gameState = ['', '', '', '', '', '', '', '', ''];
-    let gameActive = true;
-    
-    const winningConditions = [
-        [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
-        [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
-        [0, 4, 8], [2, 4, 6]             // diagonals
-    ];
-    
-    function handleCellClick(e) {
-        const clickedCell = e.target;
-        const clickedCellIndex = parseInt(clickedCell.getAttribute('data-index'));
-        
-        if (gameState[clickedCellIndex] !== '' || !gameActive) {
+    const playerScore = document.getElementById('player-score');
+    const opponentScore = document.getElementById('opponent-score');
+    const restartBtn = document.getElementById('restart');
+    const connectionStatus = document.getElementById('connection-status');
+    const modal = document.getElementById('modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalMessage = document.getElementById('modal-message');
+    const playerNameInput = document.getElementById('player-name');
+    const startGameBtn = document.getElementById('start-game');
+
+    let playerSymbol = '';
+    let currentPlayer = '';
+    let gameActive = false;
+    let playerName = '';
+    let opponentName = '';
+    let scores = { player: 0, opponent: 0 };
+
+    // Show modal on start
+    modal.style.display = 'flex';
+
+    // Event listeners
+    startGameBtn.addEventListener('click', () => {
+        if (playerNameInput.value.trim() === '') {
+            alert('Please enter your name');
             return;
         }
-        
-        gameState[clickedCellIndex] = currentPlayer;
-        clickedCell.textContent = currentPlayer;
-        
-        checkResult();
-    }
-    
-    function checkResult() {
-        let roundWon = false;
-        
-        for (let i = 0; i < winningConditions.length; i++) {
-            const [a, b, c] = winningConditions[i];
-            
-            if (gameState[a] === '' || gameState[b] === '' || gameState[c] === '') {
-                continue;
+        playerName = playerNameInput.value.trim();
+        modal.style.display = 'none';
+        socket.emit('register', playerName);
+    });
+
+    restartBtn.addEventListener('click', () => {
+        socket.emit('restart');
+    });
+
+    cells.forEach(cell => {
+        cell.addEventListener('click', () => {
+            if (gameActive && currentPlayer === playerSymbol) {
+                const index = cell.getAttribute('data-index');
+                socket.emit('move', index);
             }
-            
-            if (gameState[a] === gameState[b] && gameState[b] === gameState[c]) {
-                roundWon = true;
-                break;
-            }
+        });
+    });
+
+    // Socket.io events
+    socket.on('connect', () => {
+        connectionStatus.textContent = 'Connected to server';
+        connectionStatus.style.color = '#2ecc71';
+    });
+
+    socket.on('disconnect', () => {
+        connectionStatus.textContent = 'Disconnected from server';
+        connectionStatus.style.color = '#e74c3c';
+        gameActive = false;
+        status.textContent = 'Connection lost. Trying to reconnect...';
+    });
+
+    socket.on('reconnect', () => {
+        connectionStatus.textContent = 'Reconnected to server';
+        connectionStatus.style.color = '#2ecc71';
+        if (playerName) {
+            socket.emit('register', playerName);
         }
-        
-        if (roundWon) {
-            status.textContent = `Player ${currentPlayer} wins!`;
-            gameActive = false;
-            return;
-        }
-        
-        if (!gameState.includes('')) {
-            status.textContent = "Game ended in a draw!";
-            gameActive = false;
-            return;
-        }
-        
-        currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
-        status.textContent = `Player ${currentPlayer}'s turn`;
-    }
-    
-    function resetGame() {
-        currentPlayer = 'X';
-        gameState = ['', '', '', '', '', '', '', '', ''];
+    });
+
+    socket.on('waiting', () => {
+        status.textContent = 'Waiting for opponent...';
+        gameActive = false;
+    });
+
+    socket.on('gameStart', (data) => {
+        playerSymbol = data.symbol;
+        currentPlayer = data.currentPlayer;
+        opponentName = data.opponentName;
         gameActive = true;
-        status.textContent = `Player ${currentPlayer}'s turn`;
         
+        updateStatus();
+        resetBoard();
+    });
+
+    socket.on('move', (data) => {
+        const { index, player, winningCells } = data;
+        
+        // Update board
+        const cell = cells[index];
+        cell.classList.add(player === 'X' ? 'x' : 'o');
+        cell.textContent = player;
+        
+        // Check for winner or draw
+        if (winningCells) {
+            gameActive = false;
+            winningCells.forEach(i => {
+                cells[i].classList.add('winning-cell');
+            });
+            
+            if (player === playerSymbol) {
+                scores.player++;
+                playerScore.textContent = scores.player;
+                status.textContent = `You win!`;
+            } else {
+                scores.opponent++;
+                opponentScore.textContent = scores.opponent;
+                status.textContent = `${opponentName} wins!`;
+            }
+        } else if (data.isDraw) {
+            gameActive = false;
+            status.textContent = 'Game ended in a draw!';
+        } else {
+            currentPlayer = player === 'X' ? 'O' : 'X';
+            updateStatus();
+        }
+    });
+
+    socket.on('restart', () => {
+        resetBoard();
+        currentPlayer = 'X';
+        gameActive = true;
+        updateStatus();
+    });
+
+    socket.on('opponentDisconnected', () => {
+        gameActive = false;
+        status.textContent = 'Opponent disconnected. Waiting for new opponent...';
+        resetBoard();
+    });
+
+    socket.on('error', (message) => {
+        alert(message);
+    });
+
+    // Helper functions
+    function updateStatus() {
+        if (currentPlayer === playerSymbol) {
+            status.textContent = 'Your turn';
+        } else {
+            status.textContent = `${opponentName}'s turn`;
+        }
+    }
+
+    function resetBoard() {
         cells.forEach(cell => {
             cell.textContent = '';
+            cell.classList.remove('x', 'o', 'winning-cell');
         });
     }
-    
-    cells.forEach(cell => {
-        cell.addEventListener('click', handleCellClick);
-    });
-    
-    resetButton.addEventListener('click', resetGame);
 });
